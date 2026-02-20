@@ -83,6 +83,12 @@ class Interpreter:
         while self.script_stack:
             self.tick()
 
+    def is_working(self):
+        """실행할 Oper이 있는지 확인합니다."""
+        if self.script_stack:
+            return True
+        return False
+
     def tick(self) -> None:
         """한 스텝(Oper)을 평가합니다."""
         if not self.script_stack:

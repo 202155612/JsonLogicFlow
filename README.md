@@ -61,7 +61,7 @@ engine.execute("Main", {"user_name": "Alice"})
 
 # 방법 B: 스텝 단위로 제어하며 실행하기 (Tick 방식)
 # engine.call_script("Main", ["Alice"])
-# while engine.script_stack:
+# while engine.is_working():
 #     engine.tick()
 
 ```
