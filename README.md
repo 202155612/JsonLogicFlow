@@ -57,12 +57,12 @@ function_registry = {
 engine = Interpreter(script_registry, function_registry)
 
 # 방법 A: 한 번에 끝까지 실행하기
-engine.execute("Main", {"user_name": "Alice"})
+# engine.execute("Main", {"user_name": "Alice"})
 
 # 방법 B: 스텝 단위로 제어하며 실행하기 (Tick 방식)
-# engine.call_script("Main", ["Alice"])
-# while engine.is_working():
-#     engine.tick()
+engine.call_script("Main", ["Alice"])
+while engine.is_working():
+    engine.tick()
 
 ```
 
