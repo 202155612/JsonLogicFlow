@@ -5,6 +5,8 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from constant import ExecState, FrameType, ScopeType
 from oper import Oper, create_oper
 
+import json
+
 
 class Frame:
     """분기점과 분기점 사이의 코드(Oper) 덩어리를 담당합니다."""
@@ -288,7 +290,7 @@ class Interpreter:
                 curr[key] = {}
             curr = curr[key]
         curr[path[-1]] = value
-
+    
     def get(self, scope: ScopeType, path: List[str]) -> Any:
         top_script = self.get_top_script()
 
@@ -312,8 +314,13 @@ class Interpreter:
             raise ValueError(f"Unknown scope: {scope}")
 
         return self._traverse_path(base, path)
-
+    
     def set(self, scope: ScopeType, path: List[str], value: Any) -> None:
+        try:
+            json.dumps(value)
+        except (TypeError, OverflowError):
+            raise TypeError(f"직렬화 불가능한 타입은 변수에 저장할 수 없습니다: {type(value).__name__}")
+        
         top_script = self.get_top_script()
 
         if not path:

@@ -18,3 +18,4 @@ class ExecState(Enum):
     FINISHED = auto()
 
 MAX_LOOP_ITERATIONS = 10000
+

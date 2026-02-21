@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, RootModel, TypeAdapter, model_validator
 from typing_extensions import Annotated
 from constant import ScopeType
 
+
 if TYPE_CHECKING:
     from .interpreter import Interpreter
 
@@ -18,7 +19,7 @@ class ListOpArgs(BaseModel):
     value: List['Expr']
 
 class DictOpArgs(BaseModel):
-    value: Dict[Any, 'Expr']
+    value: Dict[str, 'Expr']
 
 class CompareArgs(BaseModel):
     """$eq, $ne, $lt, $le, $gt, $ge 등 2개의 피연산자를 받는 연산자의 공통 Args"""
@@ -158,7 +159,7 @@ class GetExpr(BaseModel):
 # 기존의 ListLiteralExpr 등과 동일하게 노드로 파싱할 수 있습니다.
 
 class DictLiteralExpr(RootModel):
-    root: Dict[Any, 'Expr']
+    root: Dict[str, 'Expr']
 
     @model_validator(mode='before')
     @classmethod
@@ -184,6 +185,16 @@ class ValueExpr(RootModel):
     def check_not_op(cls, data: Any) -> Any:
         if isinstance(data, dict) and "$op" in data:
             raise ValueError('Dictionaries with "$op" are operators, not ValueExpr.')
+        return data
+
+    @model_validator(mode='before')
+    @classmethod
+    def check_serializable(cls, data: Any) -> Any:
+        import json
+        try:
+            json.dumps(data)
+        except (TypeError, OverflowError):
+            raise ValueError(f"직렬화할 수 없는 타입이 스크립트에 포함되었습니다: {type(data).__name__}")
         return data
 
     def eval(self, interpreter: Interpreter) -> Any:
