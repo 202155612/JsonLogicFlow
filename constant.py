@@ -12,4 +12,9 @@ class ScopeType(str, Enum):
     KWARGS = "kwargs"
     GLOBAL = "global"
 
+class ExecState(Enum):
+    RUNNING = auto()
+    BLOCKED = auto()
+    FINISHED = auto()
+
 MAX_LOOP_ITERATIONS = 10000

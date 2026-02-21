@@ -180,6 +180,19 @@ class InvokeOper(BaseModel):
 
         return result
 
+class AsyncInvokeOper(BaseModel):
+    op: Literal["$AsyncInvoke"] = Field(alias="$op")
+    args: InvokeArgs
+
+    def eval(self, interpreter: "Interpreter") -> Any:
+        interpreter.block()
+        return None
+
+    def resume(self, interpreter: "Interpreter", value: Any) -> Any:
+        if self.args.scope and self.args.path:
+            interpreter.set(self.args.scope, self.args.path, value)
+        interpreter.inc_pc()
+        return value
 
 # -----------------------------------------------------------------------------
 # 3. 타입 매핑 및 팩토리 어댑터 설정
@@ -190,7 +203,7 @@ Oper = Annotated[
     Union[
         IfOper, ElseIfOper, ElseOper, WhileOper,
         BreakOper, ContinueOper, SetOper, ScriptOper,
-        ReturnOper, InvokeOper
+        ReturnOper, InvokeOper, AsyncInvokeOper
     ],
     Field(discriminator="op")
 ]
@@ -198,5 +211,4 @@ Oper = Annotated[
 OperAdapter = TypeAdapter(Oper)
 
 def create_oper(data: Any) -> Oper:
-    """Oper를 생성해 반환합니다."""
     return OperAdapter.validate_python(data)

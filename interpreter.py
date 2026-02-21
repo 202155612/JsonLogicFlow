@@ -1,18 +1,19 @@
-from enum import Enum, auto
-from typing import Any, Callable, Dict, List, Optional
+from __future__ import annotations
 
-from constant import FrameType, ScopeType
-from expr import Expr
+from typing import Any, Callable, Dict, List, Optional, Union
+
+from constant import ExecState, FrameType, ScopeType
 from oper import Oper, create_oper
+
 
 class Frame:
     """분기점과 분기점 사이의 코드(Oper) 덩어리를 담당합니다."""
+
     def __init__(self, step_list: List[Oper], frame_type: FrameType):
         self.step_list = step_list
         self.frame_type = frame_type
         self.pc: int = 0
         self.vars: Dict[str, Any] = {}
-
         self.else_flag: bool = False
         self.return_flag: bool = False
         self.return_value: Any = None
@@ -45,13 +46,12 @@ class Frame:
         self.set_else_flag(False)
 
 
-
 class Script:
     """함수처럼 인자를 받고 실행되는 코드 덩어리를 담당합니다."""
+
     def __init__(self, name: str, kwargs: Dict[str, Any], steps: List[Oper]):
         self.name = name
         self.kwargs = kwargs
-        # 스크립트가 시작될 때 전체 코드를 담은 최상위 프레임을 생성합니다.
         self.frame_stack: List[Frame] = [Frame(steps, FrameType.SCRIPT)]
 
     def get_top_frame(self) -> Frame:
@@ -70,65 +70,112 @@ class Script:
 
 class Interpreter:
     """전체 실행을 조율하고 API를 제공하는 메인 엔진입니다."""
+
     def __init__(
-        self, 
-        script_registry: Dict[str, dict], 
-        function_registry: Optional[Dict[str, Callable]] = None
+        self,
+        script_registry: Dict[str, dict],
+        function_registry: Optional[Dict[str, Callable]] = None,
     ):
-        """
-        script_registry 형태 예시:
-        {
-            "Main": {"param_keys": ["arg1"], "steps": [{"$op": "$If", ...}, ...]},
-            "Calc": {"param_keys": ["a", "b"], "steps": [...]}
-        }
-        function_registry 형태 예시:
-        {
-            "print_log": print,
-            "add_numbers": lambda a, b: a + b
-        }
-        """
-        self.script_registry: Dict[str, Dict[str, str | Dict | List]] = script_registry
+        self.script_registry: Dict[str, Dict[str, Any]] = script_registry
         self.function_registry = function_registry or {}
         self.script_stack: List[Script] = []
         self.global_vars: Dict[str, Any] = {}
-        
-    def execute(self, start_script_name: str, kwargs: Optional[Dict[str, Any]] = None):
-        """인터프리터 실행의 진입점입니다."""
+        self.exec_state: ExecState = ExecState.FINISHED
+        self._block_flag: bool = False
+
+    def execute(self, start_script_name: str, kwargs: Optional[Dict[str, Any]] = None) -> ExecState:
+        """스크립트를 시작해 BLOCKED 또는 FINISHED 상태가 될 때까지 실행합니다."""
         if kwargs is None:
             kwargs = {}
-            
         self.call_script(start_script_name, kwargs)
-        
-        while self.script_stack:
-            self.tick()
+        while True:
+            state = self.tick()
+            if state != ExecState.RUNNING:
+                return state
 
-    def is_finished(self):
-        """실행한 script가 종료되었는지 확인합니다."""
-        if not self.script_stack:
-            return True
-        return False
+    def resume_execute(self, value: Any) -> ExecState:
+        """BLOCKED 상태에서 재개한 뒤 다시 BLOCKED 또는 FINISHED 상태가 될 때까지 실행합니다."""
+        state = self.resume(value)
+        if state != ExecState.RUNNING:
+            return state
+        while True:
+            state = self.tick()
+            if state != ExecState.RUNNING:
+                return state
 
-    def tick(self) -> None:
-        """한 스텝(Oper)을 평가합니다."""
+    def is_finished(self) -> bool:
+        """인터프리터 실행이 종료(FINISHED) 상태인지 확인합니다."""
+        return self.exec_state == ExecState.FINISHED
+
+    def is_blocked(self) -> bool:
+        """인터프리터 실행이 중단(BLOCKED) 상태인지 확인합니다."""
+        return self.exec_state == ExecState.BLOCKED
+
+    def get_exec_state(self) -> ExecState:
+        return self.exec_state
+
+    def tick(self) -> ExecState:
+        """한 스텝(Oper)을 평가하고 현재 실행 상태(ExecState)를 반환합니다."""
+        if self.exec_state == ExecState.BLOCKED:
+            return self.exec_state
+
         if not self.script_stack:
-            return
+            self.exec_state = ExecState.FINISHED
+            return self.exec_state
 
         top_script = self.get_top_script()
         current_step = top_script.get_current_step()
 
         if current_step is not None:
-            # Step이 존재하면 해당 Oper의 eval을 실행 (내부에서 알아서 inc_pc 호출)
             current_step.eval(self)
+            if self._block_flag:
+                self._block_flag = False
+                self.exec_state = ExecState.BLOCKED
+                return self.exec_state
         else:
-            # 현재 프레임의 끝(pc 도달)에 다다랐을 때
             top_frame = top_script.get_top_frame()
-            
             if top_frame.frame_type == FrameType.SCRIPT:
-                # 스크립트 최상위 프레임이 끝났다면 암시적으로 Return 처리
                 self.return_script(None)
             else:
-                # If/While 등 일반 프레임이 끝났다면 프레임만 pop하고 계속 진행
                 top_script.pop_frame()
+
+        if not self.script_stack:
+            self.exec_state = ExecState.FINISHED
+        elif self.exec_state != ExecState.BLOCKED:
+            self.exec_state = ExecState.RUNNING
+
+        return self.exec_state
+
+    def resume(self, value: Any) -> ExecState:
+        """BLOCKED 상태에서 현재 스텝을 재개하기 위한 값을 주입합니다."""
+        if self.exec_state != ExecState.BLOCKED:
+            return self.exec_state
+
+        if not self.script_stack:
+            self.exec_state = ExecState.FINISHED
+            return self.exec_state
+
+        current_step = self.get_top_script().get_current_step()
+        if current_step is None:
+            self.exec_state = ExecState.RUNNING
+            return self.tick()
+
+        resume_fn = getattr(current_step, "resume", None)
+        if not callable(resume_fn):
+            raise RuntimeError("Current step is not resumable")
+
+        self.exec_state = ExecState.RUNNING
+        resume_fn(self, value)
+
+        if self._block_flag:
+            self._block_flag = False
+            self.exec_state = ExecState.BLOCKED
+            return self.exec_state
+
+        if not self.script_stack:
+            self.exec_state = ExecState.FINISHED
+
+        return self.exec_state
 
     def get_top_script(self) -> Script:
         if not self.script_stack:
@@ -150,41 +197,46 @@ class Interpreter:
         while script.frame_stack:
             frame = script.frame_stack[-1]
             if frame.frame_type == FrameType.LOOP:
-                # Break의 경우 이 프레임을 pop해야 루프를 탈출합니다.
-                # Continue의 경우는 Oper 내에서 판단에 따라 다르게 설계할 수 있으나
-                # 일반적인 While 구조에서는 현재 프레임을 종료시키면 상위 WhileOper로 돌아갑니다.
                 script.pop_frame()
                 break
-            elif frame.frame_type == FrameType.SCRIPT:
+            if frame.frame_type == FrameType.SCRIPT:
                 raise RuntimeError("Cannot break/continue outside of a loop")
-            else:
-                script.pop_frame()
+            script.pop_frame()
 
     def set_else_flag(self, value: bool = True) -> None:
         self.get_top_frame().set_else_flag(value)
 
     def get_else_flag(self) -> bool:
         return self.get_top_frame().get_else_flag()
-    
-    def call_script(self, name: str, params: List[Any] | Dict[str, Any]) -> None:
+
+    def set_block_flag(self, value: bool = True) -> None:
+        self._block_flag = value
+
+    def get_block_flag(self) -> bool:
+        return self._block_flag
+
+    def block(self) -> None:
+        self._block_flag = True
+
+    def call_script(self, name: str, params: Union[List[Any], Dict[str, Any]]) -> None:
         """이름으로 스크립트를 찾아 파라미터(list 또는 dict)를 매핑하고 스택에 추가합니다."""
         if name not in self.script_registry:
             raise ValueError(f"Script {name!r} not found in registry")
-        
+
         script_data = self.script_registry[name]
         param_keys = script_data.get("param_keys", [])
-        
+
         if isinstance(params, list):
             kwargs = dict(zip(param_keys, params))
         elif isinstance(params, dict):
             kwargs = {k: params.get(k) for k in param_keys}
         else:
             raise TypeError("params must be either a list or a dict")
-        
+
         steps = [create_oper(s) for s in script_data["steps"]]
-        
         new_script = Script(name, kwargs, steps)
         self.script_stack.append(new_script)
+        self.exec_state = ExecState.RUNNING
 
     def pop_script(self) -> None:
         self.script_stack.pop()
@@ -193,7 +245,6 @@ class Interpreter:
         """$Invoke 처리를 위한 외부 파이썬 함수 호출용"""
         if name not in self.function_registry:
             raise ValueError(f"Function {name!r} is not registered in function_registry.")
-        
         func = self.function_registry[name]
         return func(*params)
 
@@ -209,12 +260,19 @@ class Interpreter:
     def set_return_value(self, val: Any) -> None:
         self.get_top_frame().set_return_value(val)
 
-    def return_script(self, return_value: Any):
+    def return_script(self, return_value: Any) -> None:
         self.pop_script()
         if self.script_stack:
-            self.set_return_value(return_value)  
+            self.set_return_value(return_value)
             self.set_return_flag()
-        
+        else:
+            self.exec_state = ExecState.FINISHED
+
+    def _normalize_scope(self, scope: Union[str, ScopeType]) -> str:
+        if isinstance(scope, ScopeType):
+            return scope.value
+        return scope
+
     def _traverse_path(self, base: Any, path: List[str]) -> Any:
         """path(['user', 'name']) 기반으로 딕셔너리 트리를 깊게 탐색합니다."""
         curr = base
@@ -232,63 +290,64 @@ class Interpreter:
         curr = base
         for key in path[:-1]:
             if key not in curr or not isinstance(curr[key], dict):
-                curr[key] = {}  # 경로가 없으면 생성
+                curr[key] = {}
             curr = curr[key]
-        curr[path[-1]] = value # interpreter.py 내부의 get, set 메서드 교체
+        curr[path[-1]] = value
 
-    def get(self, scope: str, path: List[str]) -> Any:
+    def get(self, scope: Union[str, ScopeType], path: List[str]) -> Any:
+        scope_str = self._normalize_scope(scope)
         top_script = self.get_top_script()
-        
+
         if not path:
             raise ValueError("Path is required to get a variable.")
 
-        if scope == "local":
+        if scope_str == "local":
             root_key = path[0]
-            # 상위 프레임부터 역순으로 탐색
             for frame in reversed(top_script.frame_stack):
                 if root_key in frame.vars:
                     return self._traverse_path(frame.vars, path)
             raise KeyError(f"Key {root_key!r} not found in any local frames")
-            
-        elif scope == "frame":
+
+        if scope_str == "frame":
             base = top_script.get_top_frame().vars
-        elif scope == "kwargs":
+        elif scope_str == "kwargs":
             base = top_script.kwargs
-        elif scope == "global":
+        elif scope_str == "global":
             base = self.global_vars
         else:
-            raise ValueError(f"Unknown scope: {scope}")
-            
+            raise ValueError(f"Unknown scope: {scope_str}")
+
         return self._traverse_path(base, path)
 
-    def set(self, scope: str, path: List[str], value: Any) -> None:
+    def set(self, scope: Union[str, ScopeType], path: List[str], value: Any) -> None:
+        scope_str = self._normalize_scope(scope)
         top_script = self.get_top_script()
-        
+
         if not path:
             raise ValueError("Path is required to set a variable.")
 
-        if scope == "local":
+        if scope_str == "local":
             root_key = path[0]
-            target_frame = None
-            
+            target_frame: Optional[Frame] = None
+
             for frame in reversed(top_script.frame_stack):
                 if root_key in frame.vars:
                     target_frame = frame
                     break
-            
+
             if target_frame is None:
                 target_frame = top_script.frame_stack[0]
-                
+
             self._set_path(target_frame.vars, path, value)
             return
 
-        elif scope == "frame":
+        if scope_str == "frame":
             base = top_script.get_top_frame().vars
-        elif scope == "kwargs":
+        elif scope_str == "kwargs":
             raise ValueError("Cannot modify 'kwargs' scope directly.")
-        elif scope == "global":
+        elif scope_str == "global":
             base = self.global_vars
         else:
-            raise ValueError(f"Unknown scope: {scope}")
-            
+            raise ValueError(f"Unknown scope: {scope_str}")
+
         self._set_path(base, path, value)
