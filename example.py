@@ -9,6 +9,7 @@ JSON Script Interpreter 데모 스크립트.
 - $Break / $Continue
 - $Script / $Return (조건부 return 포함)
 - $Invoke (파이썬 함수 연동)
+- $AsyncInvoke (비동기 처리/일시정지 연동)
 - scope: local / frame / kwargs / global
 - Expr: $get / $in / $and / $not / $list / $dict
 
@@ -19,6 +20,7 @@ JSON Script Interpreter 데모 스크립트.
 from __future__ import annotations
 
 from interpreter import Interpreter
+from constant import ExecState
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +84,23 @@ script_registry = {
                 ]
             }},
 
+            # --- [NEW] $AsyncInvoke 데모 ---
+            # 사용자 권한(role)을 비동기로 가져온다고 가정
+            {"$op": "$AsyncInvoke", "args": {
+                "name": "fetch_user_role",
+                "params": [{"$op": "$get", "args": {"scope": "kwargs", "path": ["user_name"]}}],
+                "scope": "local",
+                "path": ["async_role"]
+            }},
+            {"$op": "$Invoke", "args": {
+                "name": "print_line",
+                "params": [
+                    "[Async Result] Fetched role =", 
+                    {"$op": "$get", "args": {"scope": "local", "path": ["async_role"]}}
+                ]
+            }},
+            # -------------------------------
+
             # $If/$ElseIf/$Else 데모를 별도 스크립트로 분리 (각 branch에서 즉시 $Return)
             {"$op": "$Script", "args": {
                 "name": "ChooseMode",
@@ -134,7 +153,6 @@ script_registry = {
 
     # -----------------------------------------------------------------------
     # ChooseMode: $If/$ElseIf/$Else를 "실제로 실행"하기 위한 스크립트
-    # 각 branch는 result 세팅 후 즉시 $Return -> 하나의 branch만 실행되도록 구성
     # -----------------------------------------------------------------------
     "ChooseMode": {
         "param_keys": ["mode"],
@@ -169,18 +187,7 @@ script_registry = {
     },
 
     # -----------------------------------------------------------------------
-    # ComputeStats: while loop에서 continue/break, frame/local/global 스코프를 사용
-    # - i를 1씩 증가
-    # - 짝수면 continue (skipped 증가)
-    # - 홀수면 seen_odds에 append, total에 더함
-    # - total > threshold AND i > 3 이면 break
-    # - 결과는 $dict / $list로 만들어 return
-    #
-    # NOTE: "frame" 스코프는 "현재 top_frame"에만 존재합니다.
-    #       If 블록 내부로 들어가면 top_frame이 BLOCK으로 바뀌므로,
-    #       LOOP 프레임에서 set한 frame 변수를 BLOCK 안에서 get하면 KeyError가 날 수 있습니다.
-    #       그래서 반복마다 공통으로 쓰고 싶은 값(i 등)은 local에 저장해두고,
-    #       frame은 "그 프레임 내부"에서만 쓰도록 예제를 구성했습니다.
+    # ComputeStats: while loop에서 continue/break, frame/local/global 스코프 사용
     # -----------------------------------------------------------------------
     "ComputeStats": {
         "param_keys": ["n", "threshold"],
@@ -207,14 +214,13 @@ script_registry = {
                         "path": ["i"],
                     }},
 
-                    # local.iteration = i  (BLOCK에서도 접근 가능)
+                    # local.iteration = i
                     {"$op": "$Set", "args": {
                         "value": {"$op": "$get", "args": {"scope": "local", "path": ["i"]}},
                         "scope": "local",
                         "path": ["iteration"],
                     }},
 
-                    # LOOP 프레임(frame 스코프)에서만 쓰는 note/snapshot
                     {"$op": "$Set", "args": {"value": "", "scope": "frame", "path": ["note"]}},
 
                     # 짝수면 continue
@@ -224,7 +230,6 @@ script_registry = {
                             "container": [2, 4, 6, 8, 10, 12, 14, 16, 18, 20],
                         }},
                         "scripts": [
-                            # (BLOCK frame) frame.block_tag = "EVEN_BLOCK" 데모
                             {"$op": "$Set", "args": {"value": "EVEN_BLOCK", "scope": "frame", "path": ["block_tag"]}},
 
                             # skipped_evens += 1
@@ -238,7 +243,6 @@ script_registry = {
                                 "path": ["skipped_evens"],
                             }},
 
-                            # 글로벌 로그 + 출력 (local.iteration 사용)
                             {"$op": "$Invoke", "args": {
                                 "name": "log_event",
                                 "params": [
@@ -285,7 +289,6 @@ script_registry = {
                         "path": ["total"],
                     }},
 
-                    # frame.snapshot = $dict( i, total, note )  (LOOP 프레임에서 생성/조회)
                     {"$op": "$Set", "args": {
                         "value": {"$op": "$dict", "args": {"value": {
                             "i": {"$op": "$get", "args": {"scope": "local", "path": ["iteration"]}},
@@ -337,7 +340,6 @@ script_registry = {
                 ],
             }},
 
-            # summary_list = $list([total, skipped_evens, seen_odds])
             {"$op": "$Set", "args": {
                 "value": {"$op": "$list", "args": {"value": [
                     {"$op": "$get", "args": {"scope": "local", "path": ["total"]}},
@@ -348,7 +350,6 @@ script_registry = {
                 "path": ["summary_list"],
             }},
 
-            # result = $dict(...)
             {"$op": "$Set", "args": {
                 "value": {"$op": "$dict", "args": {"value": {
                     "n": {"$op": "$get", "args": {"scope": "kwargs", "path": ["n"]}},
@@ -406,7 +407,19 @@ def run_case(user_name: str, mode: str, n: int, threshold: int) -> None:
     ticks = 0
     while not engine.is_finished():
         ticks += 1
-        engine.tick()
+        state = engine.tick()
+
+        # [NEW] $AsyncInvoke 처리 루프 연동
+        if state == ExecState.BLOCKED:
+            print(f"\n>> [Host] Interpreter BLOCKED at tick {ticks}.")
+            print(">> [Host] Simulating external asynchronous operation...")
+            
+            # 여기서 실제로는 네트워크 요청이나 DB 조회를 수행하고 완료 콜백을 기다림
+            # 데모이므로 즉시 결과를 만들어 주입(resume)합니다.
+            simulated_async_result = f"AdminRole_for_{user_name}"
+            
+            print(f">> [Host] Resuming with value: '{simulated_async_result}'\n")
+            engine.resume(simulated_async_result)
 
     print(f"--- finished (ticks={ticks}) ---")
     print("global_vars =", engine.global_vars)

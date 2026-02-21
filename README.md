@@ -8,6 +8,7 @@
 * 스텝 단위 제어 (Tick-based Execution): 전체 스크립트를 한 번에 실행하는 `execute()` 메서드뿐만 아니라, 외부 루프에서 `tick()`을 호출하여 명령어를 한 줄씩(Oper 단위로) 실행하고 멈출 수 있어 디버깅이나 비동기/게임 루프 통합에 유리합니다.
 * 파이썬 함수 연동 (`$Invoke`): `function_registry`에 파이썬 네이티브 함수를 등록해 두면, JSON 스크립트 내에서 쉽게 호출하고 결과를 받아볼 수 있습니다.
 * 체계적인 스코프(Scope) 관리: `local`, `frame`, `kwargs`, `global`의 4가지 변수 스코프를 제공하여 변수의 생명주기와 접근 범위를 엄격하게 관리합니다.
+* 비동기/외부 이벤트 연동 (`$AsyncInvoke`): 실행 중 특정 지점에서 인터프리터를 `BLOCKED` 상태로 전환해 일시정지하고, 외부에서 결과가 준비되면 `resume()`/`resume_execute()`로 값을 주입해 이어서 실행할 수 있습니다.
 
 ---
 
@@ -131,7 +132,16 @@ while not engine.is_finished():
 * args 형식: `{"name": name_expr, "params": [param1, ...], "scope": (선택), "path": (선택)}`
 * 예시: `{"$op": "$Invoke", "args": {"name": "print_log", "params": ["Hello!"], "scope": "global", "path": ["log"]}}`
 
+* `$AsyncInvoke` (비동기 호출 / 실행 일시정지)
+* 설명: 실행 도중 **즉시 결과를 만들 수 없는 외부 작업(네트워크 I/O, 사용자 입력, 게임 이벤트 등)** 이 필요한 지점에서 인터프리터를 **일시정지(BLOCKED)** 시키는 연산자입니다.
+  - `$AsyncInvoke`가 평가되면, 해당 스텝에서 `pc`(프로그램 카운터)를 증가시키지 않고 `BLOCKED` 상태로 전환됩니다.
+  - 외부에서 결과가 준비되면 `resume(value)` 또는 `resume_execute(value)`로 같은 스텝을 재개합니다.
+  - 재개 시 `scope/path`가 지정되어 있으면 주입된 `value`가 그 위치에 저장되고, 이후 `pc`가 증가하며 다음 스텝으로 진행합니다.
 
+* args 형식: `{"name": name_expr, "params": [param1, ...], "scope": (선택), "path": (선택)}`
+  - **NOTE:** 현재 구현은 `name/params`를 내부에서 평가/호출하지 않고 “메타데이터”로 보관합니다. 실제 비동기 작업 수행(어떤 작업을 할지 결정, API 호출, UI 표시 등)은 호스트 애플리케이션(바깥 루프)이 담당하고, 완료 시 결과만 `resume(...)`로 주입하는 방식입니다.
+
+* 예시: `{"$op": "$AsyncInvoke", "args": {"name": "ask_user_name", "params": [], "scope": "local" , "path": ["user_name"]}}`
 
 ### 2. 표현식 (Expr)
 
