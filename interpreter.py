@@ -3,29 +3,52 @@ from typing import Any, Callable, Dict, List, Optional
 
 from constant import FrameType, ScopeType
 from expr import Expr
-from oper import Oper
+from oper import Oper, create_oper
 
 class Frame:
     """분기점과 분기점 사이의 코드(Oper) 덩어리를 담당합니다."""
-    def __init__(self, step_list: List['Oper'], frame_type: FrameType):
+    def __init__(self, step_list: List[Oper], frame_type: FrameType):
         self.step_list = step_list
         self.frame_type = frame_type
         self.pc: int = 0
         self.vars: Dict[str, Any] = {}
-        self.else_flag: bool = False
 
-    def get_current_step(self) -> Optional['Oper']:
+        self.else_flag: bool = False
+        self.return_flag: bool = False
+        self.return_value: Any = None
+
+    def get_current_step(self) -> Optional[Oper]:
         if self.pc < len(self.step_list):
             return self.step_list[self.pc]
         return None
 
+    def get_return_flag(self) -> bool:
+        return self.return_flag
+
+    def set_return_flag(self, val: bool = True) -> None:
+        self.return_flag = val
+
+    def get_result_value(self) -> Any:
+        return self.return_value
+
+    def set_return_value(self, val: Any) -> None:
+        self.return_value = val
+
+    def set_else_flag(self, value: bool = True) -> None:
+        self.else_flag = value
+
+    def get_else_flag(self) -> bool:
+        return self.else_flag
+
     def inc_pc(self) -> None:
         self.pc += 1
+        self.set_else_flag(False)
+
 
 
 class Script:
     """함수처럼 인자를 받고 실행되는 코드 덩어리를 담당합니다."""
-    def __init__(self, name: str, kwargs: Dict[str, Any], steps: List['Oper']):
+    def __init__(self, name: str, kwargs: Dict[str, Any], steps: List[Oper]):
         self.name = name
         self.kwargs = kwargs
         # 스크립트가 시작될 때 전체 코드를 담은 최상위 프레임을 생성합니다.
@@ -39,7 +62,7 @@ class Script:
     def pop_frame(self) -> Frame:
         return self.frame_stack.pop()
 
-    def get_current_step(self) -> Optional['Oper']:
+    def get_current_step(self) -> Optional[Oper]:
         if not self.frame_stack:
             return None
         return self.get_top_frame().get_current_step()
@@ -64,28 +87,24 @@ class Interpreter:
             "add_numbers": lambda a, b: a + b
         }
         """
-        self.script_registry = script_registry
+        self.script_registry: Dict[str, Dict[str, str | Dict | List]] = script_registry
         self.function_registry = function_registry or {}
         self.script_stack: List[Script] = []
         self.global_vars: Dict[str, Any] = {}
         
-        # 반환값 관리를 위한 멤버
-        self.return_flag: bool = False
-        self.return_value: Any = None
-
     def execute(self, start_script_name: str, kwargs: Optional[Dict[str, Any]] = None):
         """인터프리터 실행의 진입점입니다."""
         if kwargs is None:
             kwargs = {}
-        
-        self.call_script(start_script_name, list(kwargs.values()))
+            
+        self.call_script(start_script_name, kwargs)
         
         while self.script_stack:
             self.tick()
 
-    def is_working(self):
-        """실행할 Oper이 있는지 확인합니다."""
-        if self.script_stack:
+    def is_finished(self):
+        """실행한 script가 종료되었는지 확인합니다."""
+        if not self.script_stack:
             return True
         return False
 
@@ -106,11 +125,7 @@ class Interpreter:
             
             if top_frame.frame_type == FrameType.SCRIPT:
                 # 스크립트 최상위 프레임이 끝났다면 암시적으로 Return 처리
-                # ReturnOper의 동작을 모방하여 인터프리터가 직접 종료시킵니다.
-                self.pop_script()
-                # 필요에 따라 암시적 리턴 시 None 세팅
-                self.set_return_flag(True)
-                self.set_return_value(None)
+                self.return_script(None)
             else:
                 # If/While 등 일반 프레임이 끝났다면 프레임만 pop하고 계속 진행
                 top_script.pop_frame()
@@ -120,10 +135,13 @@ class Interpreter:
             raise RuntimeError("Script stack is empty")
         return self.script_stack[-1]
 
-    def inc_pc(self) -> None:
-        self.get_top_script().get_top_frame().inc_pc()
+    def get_top_frame(self) -> Frame:
+        return self.get_top_script().get_top_frame()
 
-    def push_frame(self, scripts: List['Oper'], frame_type: FrameType) -> None:
+    def inc_pc(self) -> None:
+        self.get_top_frame().inc_pc()
+
+    def push_frame(self, scripts: List[Oper], frame_type: FrameType) -> None:
         self.get_top_script().frame_stack.append(Frame(scripts, frame_type))
 
     def end_loop(self) -> None:
@@ -143,23 +161,27 @@ class Interpreter:
                 script.pop_frame()
 
     def set_else_flag(self, value: bool = True) -> None:
-        self.get_top_script().get_top_frame().else_flag = value
+        self.get_top_frame().set_else_flag(value)
 
     def get_else_flag(self) -> bool:
-        return self.get_top_script().get_top_frame().else_flag
+        return self.get_top_frame().get_else_flag()
     
-    def call_script(self, name: str, params: List[Any]) -> None:
+    def call_script(self, name: str, params: List[Any] | Dict[str, Any]) -> None:
+        """이름으로 스크립트를 찾아 파라미터(list 또는 dict)를 매핑하고 스택에 추가합니다."""
         if name not in self.script_registry:
             raise ValueError(f"Script {name!r} not found in registry")
         
         script_data = self.script_registry[name]
         param_keys = script_data.get("param_keys", [])
         
-        # 인자 리스트를 kwargs 딕셔너리로 매핑
-        kwargs = dict(zip(param_keys, params))
+        if isinstance(params, list):
+            kwargs = dict(zip(param_keys, params))
+        elif isinstance(params, dict):
+            kwargs = {k: params.get(k) for k in param_keys}
+        else:
+            raise TypeError("params must be either a list or a dict")
         
-        # JSON의 steps 딕셔너리를 파싱하여 Oper 리스트로 변환
-        steps = [Oper.create(s) for s in script_data["steps"]]
+        steps = [create_oper(s) for s in script_data["steps"]]
         
         new_script = Script(name, kwargs, steps)
         self.script_stack.append(new_script)
@@ -173,20 +195,25 @@ class Interpreter:
             raise ValueError(f"Function {name!r} is not registered in function_registry.")
         
         func = self.function_registry[name]
-        # 리스트로 전달된 params를 언패킹하여 실제 파이썬 함수 인자로 넘겨줍니다.
         return func(*params)
 
     def get_return_flag(self) -> bool:
-        return self.return_flag
+        return self.get_top_frame().get_return_flag()
 
     def set_return_flag(self, val: bool = True) -> None:
-        self.return_flag = val
+        self.get_top_frame().set_return_flag(val)
 
     def get_result_value(self) -> Any:
-        return self.return_value
+        return self.get_top_frame().get_result_value()
 
     def set_return_value(self, val: Any) -> None:
-        self.return_value = val
+        self.get_top_frame().set_return_value(val)
+
+    def return_script(self, return_value: Any):
+        self.pop_script()
+        if self.script_stack:
+            self.set_return_value(return_value)  
+            self.set_return_flag()
         
     def _traverse_path(self, base: Any, path: List[str]) -> Any:
         """path(['user', 'name']) 기반으로 딕셔너리 트리를 깊게 탐색합니다."""

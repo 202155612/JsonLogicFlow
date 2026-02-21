@@ -60,8 +60,8 @@ engine = Interpreter(script_registry, function_registry)
 # engine.execute("Main", {"user_name": "Alice"})
 
 # 방법 B: 스텝 단위로 제어하며 실행하기 (Tick 방식)
-engine.call_script("Main", ["Alice"])
-while engine.is_working():
+engine.call_script("Main", ["Alice"])   # engine.call_script("Main", {"user_name": "Alice"})
+while not engine.is_finished():
     engine.tick()
 
 ```
