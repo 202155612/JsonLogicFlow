@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 from typing_extensions import Annotated
 
 from expr import Expr 
-from constant import FrameType
+from constant import FrameType, ScopeType
 
 if TYPE_CHECKING:
     from .interpreter import Interpreter
@@ -15,10 +15,9 @@ if TYPE_CHECKING:
 # -----------------------------------------------------------------------------
 # 1. 연산자 인수(Args) 스키마 정의
 # -----------------------------------------------------------------------------
-
 class IfArgs(BaseModel):
     cond: Expr
-    scripts: List['Oper']  # 재귀적 타입 참조 (Forward Reference)
+    scripts: List['Oper']
 
 class ElseIfArgs(BaseModel):
     cond: Expr
@@ -33,23 +32,23 @@ class WhileArgs(BaseModel):
 
 class SetArgs(BaseModel):
     value: Expr
-    scope: str
+    scope: ScopeType
     path: List[str]
 
 class ScriptArgs(BaseModel):
     name: Expr
     params: List[Expr]
-    scope: Optional[str] = None
+    scope: Optional[ScopeType] = None
     path: Optional[List[str]] = None
 
 class ReturnArgs(BaseModel):
-    scope: Optional[str] = None
+    scope: Optional[ScopeType] = None
     path: Optional[List[str]] = None
 
 class InvokeArgs(BaseModel):
     name: Expr
     params: List[Expr]
-    scope: Optional[str] = None
+    scope: Optional[ScopeType] = None
     path: Optional[List[str]] = None
 
 

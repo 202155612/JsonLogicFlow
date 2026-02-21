@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Union
-from pydantic import BaseModel, Field, RootModel, TypeAdapter
+from pydantic import BaseModel, Field, RootModel, TypeAdapter, model_validator
 from typing_extensions import Annotated
+from constant import ScopeType
 
 if TYPE_CHECKING:
     from .interpreter import Interpreter
@@ -35,7 +36,7 @@ class NotArgs(BaseModel):
     value: List['Expr'] = Field(min_length=1, max_length=1)
 
 class GetArgs(BaseModel):
-    scope: str
+    scope: ScopeType
     path: List[str]
 
 
@@ -159,6 +160,13 @@ class GetExpr(BaseModel):
 class DictLiteralExpr(RootModel):
     root: Dict[Any, 'Expr']
 
+    @model_validator(mode='before')
+    @classmethod
+    def check_not_op(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "$op" in data:
+            raise ValueError('Dictionaries with "$op" are operators, not DictLiteralExpr.')
+        return data
+
     def eval(self, interpreter: Interpreter) -> dict[Any, Any]:
         return {k: v.eval(interpreter) for k, v in self.root.items()}
 
@@ -170,6 +178,13 @@ class ListLiteralExpr(RootModel):
 
 class ValueExpr(RootModel):
     root: Any
+    
+    @model_validator(mode='before')
+    @classmethod
+    def check_not_op(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "$op" in data:
+            raise ValueError('Dictionaries with "$op" are operators, not ValueExpr.')
+        return data
 
     def eval(self, interpreter: Interpreter) -> Any:
         return self.root

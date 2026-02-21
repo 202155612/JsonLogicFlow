@@ -268,11 +268,6 @@ class Interpreter:
         else:
             self.exec_state = ExecState.FINISHED
 
-    def _normalize_scope(self, scope: Union[str, ScopeType]) -> str:
-        if isinstance(scope, ScopeType):
-            return scope.value
-        return scope
-
     def _traverse_path(self, base: Any, path: List[str]) -> Any:
         """path(['user', 'name']) 기반으로 딕셔너리 트리를 깊게 탐색합니다."""
         curr = base
@@ -294,39 +289,37 @@ class Interpreter:
             curr = curr[key]
         curr[path[-1]] = value
 
-    def get(self, scope: Union[str, ScopeType], path: List[str]) -> Any:
-        scope_str = self._normalize_scope(scope)
+    def get(self, scope: ScopeType, path: List[str]) -> Any:
         top_script = self.get_top_script()
 
         if not path:
             raise ValueError("Path is required to get a variable.")
 
-        if scope_str == "local":
+        if scope == ScopeType.LOCAL:
             root_key = path[0]
             for frame in reversed(top_script.frame_stack):
                 if root_key in frame.vars:
                     return self._traverse_path(frame.vars, path)
             raise KeyError(f"Key {root_key!r} not found in any local frames")
 
-        if scope_str == "frame":
+        if scope == ScopeType.FRAME:
             base = top_script.get_top_frame().vars
-        elif scope_str == "kwargs":
+        elif scope == ScopeType.KWARGS:
             base = top_script.kwargs
-        elif scope_str == "global":
+        elif scope == ScopeType.GLOBAL:
             base = self.global_vars
         else:
-            raise ValueError(f"Unknown scope: {scope_str}")
+            raise ValueError(f"Unknown scope: {scope}")
 
         return self._traverse_path(base, path)
 
-    def set(self, scope: Union[str, ScopeType], path: List[str], value: Any) -> None:
-        scope_str = self._normalize_scope(scope)
+    def set(self, scope: ScopeType, path: List[str], value: Any) -> None:
         top_script = self.get_top_script()
 
         if not path:
             raise ValueError("Path is required to set a variable.")
 
-        if scope_str == "local":
+        if scope == ScopeType.LOCAL:
             root_key = path[0]
             target_frame: Optional[Frame] = None
 
@@ -341,13 +334,13 @@ class Interpreter:
             self._set_path(target_frame.vars, path, value)
             return
 
-        if scope_str == "frame":
+        if scope == ScopeType.FRAME:
             base = top_script.get_top_frame().vars
-        elif scope_str == "kwargs":
+        elif scope == ScopeType.KWARGS:
             raise ValueError("Cannot modify 'kwargs' scope directly.")
-        elif scope_str == "global":
+        elif scope == ScopeType.GLOBAL:
             base = self.global_vars
         else:
-            raise ValueError(f"Unknown scope: {scope_str}")
+            raise ValueError(f"Unknown scope: {scope}")
 
         self._set_path(base, path, value)
