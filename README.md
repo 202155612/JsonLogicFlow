@@ -9,6 +9,7 @@
 * 파이썬 함수 연동 (`$Invoke`): `function_registry`에 파이썬 네이티브 함수를 등록해 두면, JSON 스크립트 내에서 쉽게 호출하고 결과를 받아볼 수 있습니다.
 * 체계적인 스코프(Scope) 관리: `local`, `frame`, `kwargs`, `global`의 4가지 변수 스코프를 제공하여 변수의 생명주기와 접근 범위를 엄격하게 관리합니다.
 * 비동기/외부 이벤트 연동 (`$AsyncInvoke`): 실행 중 특정 지점에서 인터프리터를 `BLOCKED` 상태로 전환해 일시정지하고, 외부에서 결과가 준비되면 `resume()`/`resume_execute()`로 값을 주입해 이어서 실행할 수 있습니다.
+* 상태 저장 및 복구 (`Save & Load State`): 인터프리터의 현재 실행 상태(Program Counter, 로컬/전역 변수, 호출 스택 등)를 JSON 형태로 직렬화하여 저장(`save_state`)하고, 언제든 새로운 인스턴스에 복구(`load_state`)하여 중단된 지점부터 이어서 실행할 수 있습니다. 분산 처리 환경이나 서버 재시작 시 유용합니다.
 
 ---
 
@@ -66,6 +67,31 @@ while not engine.is_finished():
     engine.tick()
 
 ```
+
+---
+
+## 상태 저장 및 복구 (Save & Load)
+
+인터프리터는 긴 시간이 걸리는 비동기 작업 중이거나 서버가 재시작되어야 할 때, 현재까지의 모든 실행 상태(변수, 스택, 스크립트 레지스트리 등)를 그대로 저장하고 나중에 복구할 수 있습니다.
+
+> **주의:** 상태를 안전하게 저장하고 복구하기 위해, 인터프리터의 변수(`$Set` 연산자나 외부 함수에서 반환되는 값)로 저장되는 모든 데이터는 **반드시 JSON으로 직렬화 가능(JSON Serializable)**한 기본 타입(int, str, list, dict 등)이어야 합니다. 파이썬 객체 인스턴스 등은 저장할 수 없습니다.
+
+```python
+# 1. 실행 중인 엔진의 상태를 딕셔너리로 추출 (JSON 직렬화 가능)
+saved_data = engine.save_state()
+
+# --- (이 시점에서 JSON 파일로 저장하거나 DB에 보관) ---
+
+# 2. 나중에 새로운 엔진 인스턴스를 생성하고 상태 복구
+new_engine = Interpreter(script_registry, function_registry)
+new_engine.load_state(saved_data)
+
+# 3. 중단되었던 지점부터 이어서 실행
+while not new_engine.is_finished():
+    new_engine.tick()
+```
+    
+---
 
 ## 언어 명세 및 문법 (Syntax)
 

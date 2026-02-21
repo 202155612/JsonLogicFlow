@@ -12,6 +12,7 @@ JSON Script Interpreter 데모 스크립트.
 - $AsyncInvoke (비동기 처리/일시정지 연동)
 - scope: local / frame / kwargs / global
 - Expr: $get / $in / $and / $not / $list / $dict
+- [NEW] save_state / load_state (상태 저장 및 복구)
 
 실행 방법:
     python example.py
@@ -19,6 +20,7 @@ JSON Script Interpreter 데모 스크립트.
 
 from __future__ import annotations
 
+import json
 from interpreter import Interpreter
 from constant import ExecState
 
@@ -84,7 +86,6 @@ script_registry = {
                 ]
             }},
 
-            # --- [NEW] $AsyncInvoke 데모 ---
             # 사용자 권한(role)을 비동기로 가져온다고 가정
             {"$op": "$AsyncInvoke", "args": {
                 "name": "fetch_user_role",
@@ -395,10 +396,10 @@ script_registry = {
 
 
 # ---------------------------------------------------------------------------
-# 3) Tick 기반 실행 루프
+# 3) Tick 기반 실행 루프 (save_state / load_state 적용)
 # ---------------------------------------------------------------------------
 
-def run_case(user_name: str, mode: str, n: int, threshold: int) -> None:
+def run_case(user_name: str, mode: str, n: int, threshold: int, test_save_load: bool = False) -> None:
     engine = Interpreter(script_registry, function_registry)
 
     # param_keys = ["user_name", "mode", "n", "threshold"] 순서대로 params를 넣어야 합니다.
@@ -409,9 +410,35 @@ def run_case(user_name: str, mode: str, n: int, threshold: int) -> None:
         ticks += 1
         state = engine.tick()
 
-        # [NEW] $AsyncInvoke 처리 루프 연동
+        # $AsyncInvoke 처리 루프 연동
         if state == ExecState.BLOCKED:
             print(f"\n>> [Host] Interpreter BLOCKED at tick {ticks}.")
+            
+            # [NEW] Save / Load 기능 테스트
+            if test_save_load:
+                print(">> [Host] --- SAVE / LOAD TEST START ---")
+                
+                # 1. 현재 상태 저장
+                saved_state_dict = engine.save_state()
+                
+                # DB나 파일에 저장했다가 다시 불러온다고 가정 (JSON 직렬화/역직렬화)
+                saved_json_str = json.dumps(saved_state_dict)
+                restored_state_dict = json.loads(saved_json_str)
+                
+                print(">> [Host] State successfully serialized to JSON and deserialized.")
+                
+                # 2. 완전히 새로운 인터프리터 인스턴스 생성
+                # (파이썬 함수 레지스트리는 콜백이므로 인스턴스화 할 때 다시 넘겨주어야 함)
+                new_engine = Interpreter(script_registry, function_registry)
+                
+                # 3. 역직렬화된 상태 로드
+                new_engine.load_state(restored_state_dict)
+                print(">> [Host] State loaded into the NEW interpreter instance.")
+                
+                # 4. 기존 엔진을 새 엔진으로 교체
+                engine = new_engine
+                print(">> [Host] --- SAVE / LOAD TEST COMPLETE ---\n")
+
             print(">> [Host] Simulating external asynchronous operation...")
             
             # 여기서 실제로는 네트워크 요청이나 DB 조회를 수행하고 완료 콜백을 기다림
@@ -429,8 +456,9 @@ if __name__ == "__main__":
     # 1) mode="A" -> ChooseMode에서 $If branch 실행
     run_case("Alice", "A", n=10, threshold=15)
 
-    # 2) mode="B" -> ChooseMode에서 $ElseIf branch 실행
-    run_case("Bob", "B", n=10, threshold=17)
+    # 2) mode="B" -> ChooseMode에서 $ElseIf branch 실행 
+    # (여기서 Save / Load 기능이 제대로 동작하는지 테스트합니다)
+    run_case("Bob", "B", n=10, threshold=17, test_save_load=True)
 
     # 3) mode="Z" -> ChooseMode에서 $Else branch 실행
     run_case("Charlie", "Z", n=10, threshold=12)

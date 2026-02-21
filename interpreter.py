@@ -47,6 +47,28 @@ class Frame:
         self.pc += 1
         self.set_else_flag(False)
 
+    def to_dict(self) -> dict:
+        return {
+            "step_list": [step.model_dump(by_alias=True) for step in self.step_list],
+            "frame_type": self.frame_type.name,
+            "pc": self.pc,
+            "vars": self.vars,
+            "else_flag": self.else_flag,
+            "return_flag": self.return_flag,
+            "return_value": self.return_value,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Frame":
+        steps = [create_oper(s) for s in data["step_list"]]
+        frame = cls(steps, FrameType[data["frame_type"]])
+        frame.pc = data["pc"]
+        frame.vars = data["vars"]
+        frame.else_flag = data["else_flag"]
+        frame.return_flag = data["return_flag"]
+        frame.return_value = data["return_value"]
+        return frame
+
 
 class Script:
     """함수처럼 인자를 받고 실행되는 코드 덩어리를 담당합니다."""
@@ -68,6 +90,19 @@ class Script:
         if not self.frame_stack:
             return None
         return self.get_top_frame().get_current_step()
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "kwargs": self.kwargs,
+            "frame_stack": [f.to_dict() for f in self.frame_stack]
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Script":
+        script = cls(data["name"], data["kwargs"], [])
+        script.frame_stack = [Frame.from_dict(f) for f in data["frame_stack"]]
+        return script
 
 
 class Interpreter:
@@ -106,11 +141,9 @@ class Interpreter:
                 return state
 
     def is_finished(self) -> bool:
-        """인터프리터 실행이 종료(FINISHED) 상태인지 확인합니다."""
         return self.exec_state == ExecState.FINISHED
 
     def is_blocked(self) -> bool:
-        """인터프리터 실행이 중단(BLOCKED) 상태인지 확인합니다."""
         return self.exec_state == ExecState.BLOCKED
 
     def get_exec_state(self) -> ExecState:
@@ -194,7 +227,6 @@ class Interpreter:
         self.get_top_script().frame_stack.append(Frame(scripts, frame_type))
 
     def end_loop(self) -> None:
-        """Break나 Continue 호출 시 가장 가까운 LOOP 프레임을 찾아 정리합니다."""
         script = self.get_top_script()
         while script.frame_stack:
             frame = script.frame_stack[-1]
@@ -221,7 +253,6 @@ class Interpreter:
         self._block_flag = True
 
     def call_script(self, name: str, params: Union[List[Any], Dict[str, Any]]) -> None:
-        """이름으로 스크립트를 찾아 파라미터(list 또는 dict)를 매핑하고 스택에 추가합니다."""
         if name not in self.script_registry:
             raise ValueError(f"Script {name!r} not found in registry")
 
@@ -244,7 +275,6 @@ class Interpreter:
         self.script_stack.pop()
 
     def call_func(self, name: str, params: List[Any]) -> Any:
-        """$Invoke 처리를 위한 외부 파이썬 함수 호출용"""
         if name not in self.function_registry:
             raise ValueError(f"Function {name!r} is not registered in function_registry.")
         func = self.function_registry[name]
@@ -271,7 +301,6 @@ class Interpreter:
             self.exec_state = ExecState.FINISHED
 
     def _traverse_path(self, base: Any, path: List[str]) -> Any:
-        """path(['user', 'name']) 기반으로 딕셔너리 트리를 깊게 탐색합니다."""
         curr = base
         for key in path:
             if isinstance(curr, dict) and key in curr:
@@ -281,7 +310,6 @@ class Interpreter:
         return curr
 
     def _set_path(self, base: dict, path: List[str], value: Any) -> None:
-        """path에 맞게 딕셔너리를 파고들어가 값을 세팅합니다."""
         if not path:
             return
         curr = base
@@ -351,3 +379,21 @@ class Interpreter:
             raise ValueError(f"Unknown scope: {scope}")
 
         self._set_path(base, path, value)
+
+    def save_state(self) -> dict:
+        """현재 인터프리터의 실행 상태와 원본 스크립트 레지스트리를 모두 저장합니다."""
+        return {
+            "exec_state": self.exec_state.name,
+            "block_flag": self._block_flag,
+            "global_vars": self.global_vars,
+            "script_registry": self.script_registry,
+            "script_stack": [s.to_dict() for s in self.script_stack]
+        }
+
+    def load_state(self, state_data: dict) -> None:
+        """저장된 딕셔너리로부터 전체 상태와 스크립트를 복구합니다."""
+        self.exec_state = ExecState[state_data["exec_state"]]
+        self._block_flag = state_data["block_flag"]
+        self.global_vars = state_data["global_vars"]
+        self.script_registry = state_data["script_registry"]
+        self.script_stack = [Script.from_dict(s) for s in state_data["script_stack"]]
