@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from constant import ExecState, FrameType, ScopeType
-from oper import Oper, create_oper
+from oper import Oper, create_oper, ScriptRegistryAdapter
 
 import json
 
@@ -104,7 +104,6 @@ class Script:
         script.frame_stack = [Frame.from_dict(f) for f in data["frame_stack"]]
         return script
 
-
 class Interpreter:
     """전체 실행을 조율하고 API를 제공하는 메인 엔진입니다."""
 
@@ -114,6 +113,8 @@ class Interpreter:
         function_registry: Optional[Dict[str, Callable]] = None,
     ):
         self.script_registry: Dict[str, Dict[str, Any]] = script_registry
+        self._parsed_registry = ScriptRegistryAdapter.validate_python(script_registry)
+        
         self.function_registry = function_registry or {}
         self.script_stack: List[Script] = []
         self.global_vars: Dict[str, Any] = {}
@@ -253,11 +254,11 @@ class Interpreter:
         self._block_flag = True
 
     def call_script(self, name: str, params: Union[List[Any], Dict[str, Any]]) -> None:
-        if name not in self.script_registry:
+        if name not in self._parsed_registry:
             raise ValueError(f"Script {name!r} not found in registry")
 
-        script_data = self.script_registry[name]
-        param_keys = script_data.get("param_keys", [])
+        script_def = self._parsed_registry[name]
+        param_keys = script_def.param_keys or []
 
         if isinstance(params, list):
             kwargs = dict(zip(param_keys, params))
@@ -265,8 +266,8 @@ class Interpreter:
             kwargs = {k: params.get(k) for k in param_keys}
         else:
             raise TypeError("params must be either a list or a dict")
-
-        steps = [create_oper(s) for s in script_data["steps"]]
+        steps = script_def.steps
+        
         new_script = Script(name, kwargs, steps)
         self.script_stack.append(new_script)
         self.exec_state = ExecState.RUNNING
@@ -397,3 +398,5 @@ class Interpreter:
         self.global_vars = state_data["global_vars"]
         self.script_registry = state_data["script_registry"]
         self.script_stack = [Script.from_dict(s) for s in state_data["script_stack"]]
+
+

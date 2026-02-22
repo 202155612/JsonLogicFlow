@@ -211,3 +211,10 @@ OperAdapter = TypeAdapter(Oper)
 
 def create_oper(data: Any) -> Oper:
     return OperAdapter.validate_python(data)
+
+class ScriptDef(BaseModel):
+    """단일 스크립트의 구조를 정의하고 검증합니다."""
+    param_keys: Optional[List[str]] = Field(default_factory=list)
+    steps: List[Oper]
+
+ScriptRegistryAdapter = TypeAdapter(Dict[str, ScriptDef])
